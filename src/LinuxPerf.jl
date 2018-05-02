@@ -1,5 +1,7 @@
 module LinuxPerf
 
+export make_bench, enable!, disable!, reset!, reasonable_defaults, counters
+
 const SYS_perf_event_open = 298
 
 type perf_event_attr
@@ -150,8 +152,8 @@ type EventGroup
                         warn_unsupported = true,
                         userspace_only = false
                         )
-        my_types = Array(EventType, 0)
-        group = new(-1, Array(Cint, 0), Array(EventType, 0))
+        my_types = Array{EventType}(0)
+        group = new(-1, Array{Cint}(0), Array{EventType}(0))
         for (i,evt_type) in enumerate(types)
             attr = perf_event_attr()
             attr.typ = evt_type.category
@@ -256,7 +258,7 @@ enable!(b::PerfBench) = foreach(enable!, b.groups)
 disable!(b::PerfBench) = foreach(disable!, b.groups)
 reset!(b::PerfBench) = foreach(reset!, b.groups)
 function counters(b::PerfBench)
-    c = Array(Counter, 0)
+    c = Array{Counter}(0)
     for g in b.groups
         values = read(g.leader_io, UInt64, length(g)+1+2)
         @assert(length(g) == values[1])
@@ -269,7 +271,7 @@ function counters(b::PerfBench)
     Counters(c)
 end
 function make_bench(x)
-    groups = Array(EventGroup, 0)
+    groups = Array{EventGroup}(0)
     for y in x
         if isa(y, EventType)
             push!(groups, EventGroup([y]))
@@ -298,3 +300,4 @@ const reasonable_defaults =
       EventType(:cache, :L1_data, :write, :miss)]=#]
 
 end
+
