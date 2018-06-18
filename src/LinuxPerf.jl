@@ -1,10 +1,23 @@
-module LinuxPerf
+module Perf
+using Printf
 
-export make_bench, enable!, disable!, reset!, reasonable_defaults, counters
+export make_bench, enable!, disable!, reset!, reasonable_defaults,
+counters
+
+# macro perf(ex)
+#     return quote
+#         bench = make_bench(reasonable_defaults)
+#         enable!(bench)
+#         $(esc(ex))
+#         disable!(bench)
+#         counters(bench)
+#         reset!(bench)
+#     end
+# end
 
 const SYS_perf_event_open = 298
 
-type perf_event_attr
+mutable struct perf_event_attr
     typ :: UInt32
     size :: UInt32
     config :: UInt64
@@ -28,7 +41,7 @@ type perf_event_attr
     perf_event_attr() = new()
 end
 
-const EVENT_TYPES =
+EVENT_TYPES =
     [
      (:hw, 0, # PERF_TYPE_HARDWARE
       [(:cycles, 0), # PERF_COUNT_HW_CPU_CYCLES
@@ -72,7 +85,7 @@ const PERF_FORMAT_TOTAL_TIME_ENABLED = 1 << 0
 const PERF_FORMAT_TOTAL_TIME_RUNNING = 1 << 1
 const PERF_FORMAT_GROUP = 1 << 3
 
-immutable EventType
+mutable struct EventType
     category :: UInt32
     event :: UInt64
 end
@@ -143,17 +156,18 @@ function EventType(cat::Symbol, cache::Symbol, op::Symbol, evt::Symbol)
                      cache_id | (op_id << 8) | (evt_id << 16))
 end
 
-type EventGroup
+
+mutable struct EventGroup
     leader_fd :: Cint
     fds :: Vector{Cint}
     event_types :: Vector{EventType}
     leader_io :: IOStream
-    function EventGroup(types :: Vector{EventType};
+    @noinline function EventGroup(types :: Vector{EventType};
                         warn_unsupported = true,
                         userspace_only = false
                         )
-        my_types = Array{EventType}(0)
-        group = new(-1, Array{Cint}(0), Array{EventType}(0))
+        my_types = Array{EventType}(undef, 0)
+        group = new(-1, Array{Cint}(undef, 0), Array{EventType}(undef, 0))
         for (i,evt_type) in enumerate(types)
             attr = perf_event_attr()
             attr.typ = evt_type.category
@@ -177,7 +191,7 @@ type EventGroup
                 errno = Libc.errno()
                 if errno in (Libc.EINVAL,Libc.ENOENT)
                     if warn_unsupported
-                        warn("$evt_type not supported, skipping")
+                        @warn "$evt_type not supported, skipping"
                     end
                     continue
                 else
@@ -220,27 +234,31 @@ function ioctl(group::EventGroup, x)
         error("ioctl error : $(Libc.strerror())")
     end
 end
-enable!(g::EventGroup) = ioctl(g, PERF_EVENT_IOC_ENABLE)
-disable!(g::EventGroup) = ioctl(g, PERF_EVENT_IOC_DISABLE)
-reset!(g::EventGroup) = ioctl(g, PERF_EVENT_IOC_RESET)
+
+@noinline enable!(g::EventGroup) = ioctl(g, PERF_EVENT_IOC_ENABLE)
+@noinline disable!(g::EventGroup) = ioctl(g, PERF_EVENT_IOC_DISABLE)
+@noinline reset!(g::EventGroup) = ioctl(g, PERF_EVENT_IOC_RESET)
 function Base.close(g::EventGroup)
     for fd in g.fds
         ccall(:close, Cint, (Cint,), fd)
     end
 end
 
-type PerfBench
+mutable struct PerfBench
     groups :: Vector{EventGroup}
 end
-immutable Counter
+
+struct Counter
     event :: EventType
     value :: UInt64
     enabled :: UInt64
     running :: UInt64
 end
-immutable Counters
+
+struct Counters
     counters :: Vector{Counter}
 end
+
 function Base.show(io::IO, c::Counters)
     for c in c.counters
         print(io, c.event, " : ")
@@ -251,12 +269,13 @@ function Base.show(io::IO, c::Counters)
         else
             @printf(io, "\n\t%20d (%.1f %%)", Int64(c.value), 100*(c.running/c.enabled))
         end
-        println()
     end
 end
+
 enable!(b::PerfBench) = foreach(enable!, b.groups)
 disable!(b::PerfBench) = foreach(disable!, b.groups)
 reset!(b::PerfBench) = foreach(reset!, b.groups)
+
 function counters(b::PerfBench)
     c = Array{Counter}(0)
     for g in b.groups
@@ -270,8 +289,9 @@ function counters(b::PerfBench)
     end
     Counters(c)
 end
+
 function make_bench(x)
-    groups = Array{EventGroup}(0)
+    groups = Array{EventGroup}(undef, 0)
     for y in x
         if isa(y, EventType)
             push!(groups, EventGroup([y]))
@@ -283,7 +303,7 @@ function make_bench(x)
 end
 
 const reasonable_defaults =
-    [EventType(:hw, :cycles),
+[[EventType(:hw, :cycles)],
      [EventType(:hw, :cache_access),
       EventType(:hw, :cache_misses)],
      [EventType(:hw, :branches),
@@ -294,10 +314,9 @@ const reasonable_defaults =
       EventType(:sw, :minor_page_faults),
       EventType(:sw, :major_page_faults),
       EventType(:sw, :cpu_migrations)],
-#=     [EventType(:cache, :L1_data, :read, :access),
+     [EventType(:cache, :L1_data, :read, :access),
       EventType(:cache, :L1_data, :read, :miss)],
      [EventType(:cache, :L1_data, :write, :access),
-      EventType(:cache, :L1_data, :write, :miss)]=#]
+      EventType(:cache, :L1_data, :write, :miss)]]
 
 end
-
